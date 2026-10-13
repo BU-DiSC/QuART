@@ -2,14 +2,14 @@
 # Experiment: ART vs QuART_stail over the full K-L sortedness grid (N=500M).
 #
 # Usage:
-#   bash experiments/5.1-bods-experiments/quart-vs-stail/run.sh
+#   bash experiments/4.1-bods/stail-vs-art/run.sh
 #
 # Environment variables (all optional):
 #   WORKLOAD_DIR  – directory containing BoDS workload .bin files
 #   REPEAT        – number of timed repetitions per configuration (default: 1)
 #
 # Output:
-#   experiments/5.1-bods-experiments/quart-vs-stail/results/results_<TIMESTAMP>.csv
+#   experiments/4.1-bods/stail-vs-art/results/results_<TIMESTAMP>.csv
 #
 # CSV columns:
 #   workload, K, L, tree_type, avg_insert_ns, avg_query_ns

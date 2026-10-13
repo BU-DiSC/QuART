@@ -32,10 +32,8 @@ namespace ART {
 // tree through the common QuART_conc_olc_base.
 //
 // Correctness model is identical to QuART_conc_olc_stail: ASan-clean + verify-
-// every-key, and TSan-DIRTY BY CONSTRUCTION (optimistic reads race with locked
-// writers and validate afterward).  See the long comment in olc_base.h.
-// Concurrent lookups are not supported — the intended use is parallel-insert →
-// join() → verify.
+// every-key.  See the long comment in olc_base.h.  Concurrent lookups are not
+// supported — the intended use is parallel-insert → join() → verify.
 // ─────────────────────────────────────────────────────────────────────────────
 class QuART_conc_olc_art : public QuART_conc_olc_base {
    public:

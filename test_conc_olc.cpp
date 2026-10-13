@@ -18,13 +18,13 @@
 //                So the tree simultaneously contains root forks and deep forks,
 //                and the index must handle both with no configuration.
 //
-// For each run: single-threaded baselines (plain ART, QuART_multi_fp<W>), then
-// parallel insert (W threads, no pre-warm) into BOTH concurrent tree types —
+// For each run: a single-threaded baseline (plain ART), then parallel insert
+// (W threads, no pre-warm) into BOTH concurrent tree types —
 // QuART_conc_olc_stail (per-thread stail fast-path tail) and QuART_conc_olc_art
-// (plain OLC ART, no fast path) — and verify EVERY inserted key by lookup after
-// all joins (misses ⇒ abort).  CSV row:
-//   mode,threads,keys_per_stream,total,serial_art_ns,serial_multi_fp_ns,
-//   concurrent_ns,speedup_vs_multi_fp,speedup_vs_art,Minserts_s
+// (plain OLC ART, no fast path, = ART-OLC) — and verify EVERY inserted key by
+// lookup after all joins (misses ⇒ abort).  CSV row:
+//   mode,W,per_stream,total,serial_art_ns,olc_nofp_ns,olc_stail_ns,
+//   nofp_Mips,stail_Mips,nofp_xART,stail_xART,stail_vs_nofp
 //
 // Build: cmake --build build --target test_conc_olc
 // Run  : ./build/test_conc_olc 8 40000 --mode mixed
@@ -57,7 +57,6 @@
 #include "QuArtNodeBulkLoadMethods.cpp"
 #include "trees/QuART_conc_olc_art.h"
 #include "trees/QuART_conc_olc_stail.h"
-#include "trees/QuART_multi_fp.h"
 
 using namespace std;
 using namespace ART;
@@ -161,13 +160,12 @@ static vector<vector<key_int_t>> buildMixed(size_t W, size_t per_stream) {
 }
 
 // bods: real BoDS N=20M workload files, one per stream, at 40M start-offset
-// steps (start = i*40M+1) — the same files test_multi_fp_grid uses.  Each
-// stream is filtered to its nominal value window [start, start+N], which drops
-// stray generation artifacts (e.g. a lone 0 in a K1_L1 file) so the streams
-// stay disjoint and duplicate-free.  keys_per_stream 0 = full file.
-// conc_olc makes no disjointness assumption, but a clean window keeps the
-// single-threaded ART/multi_fp baselines apples-to-apples and avoids ART's
-// duplicate- key hazard.
+// steps (start = i*40M+1).  Each stream is filtered to its nominal value window
+// [start, start+N], which drops stray generation artifacts (e.g. a lone 0 in a
+// K1_L1 file) so the streams stay disjoint and duplicate-free.  keys_per_stream
+// 0 = full file.  conc_olc makes no disjointness assumption, but a clean window
+// keeps the single-threaded ART baseline apples-to-apples and avoids ART's
+// duplicate-key hazard.
 static constexpr long long STREAM_N = 20000000;     // keys per file
 static constexpr long long STREAM_STEP = 40000000;  // start-offset stride
 
@@ -285,33 +283,6 @@ static long long runSerial(TreeT& tree,
     return chrono::duration_cast<chrono::nanoseconds>(t1 - t0).count();
 }
 
-static long long runSerialMultiFp(size_t W,
-                                  const vector<array<uint8_t, keyBytes>>& enc,
-                                  const vector<key_int_t>& vals) {
-    auto run = [&](auto* tag) -> long long {
-        using T = std::remove_pointer_t<decltype(tag)>;
-        T tree;
-        return runSerial(tree, enc, vals);
-    };
-    switch (W) {
-        case 1:
-            return run((QuART_multi_fp<1>*)nullptr);
-        case 2:
-            return run((QuART_multi_fp<2>*)nullptr);
-        case 4:
-            return run((QuART_multi_fp<4>*)nullptr);
-        case 8:
-            return run((QuART_multi_fp<8>*)nullptr);
-        case 16:
-            return run((QuART_multi_fp<16>*)nullptr);
-        case 32:
-            return run((QuART_multi_fp<32>*)nullptr);
-        case 64:
-            return run((QuART_multi_fp<64>*)nullptr);
-        default:
-            return -1;
-    }
-}
 
 // Parallel insert (W threads, one per stream, NO pre-warm), then verify every
 // inserted key by lookup after join.  Returns timed insert ns; sets misses.
@@ -436,8 +407,7 @@ int main(int argc, char** argv) {
                "(1/3 each) from\n"
                "                 the 3 mix levels (K0_L0,K5_L5,K25_L25);\n"
                "                 W%3 remainder to random distinct series.\n"
-               "  --no-serial  : skip the single-threaded ART/multi_fp "
-               "baselines "
+               "  --no-serial  : skip the single-threaded ART baseline "
                "(heavy at\n"
                "                 full 20M/stream × high W).\n";
         return 1;
@@ -523,7 +493,6 @@ int main(int argc, char** argv) {
     // baselines cost ~30GB and minutes each, and are not part of the
     // concurrent-throughput sweep.
     long long serial_art_ns = -1;
-    long long serial_multi_fp_ns = -1;
     if (!no_serial) {
         vector<key_int_t> iv;
         vector<array<uint8_t, keyBytes>> ie;
@@ -546,9 +515,6 @@ int main(int argc, char** argv) {
             cerr << "  serial ART        : " << setw(7)
                  << serial_art_ns / 1'000'000 << " ms\n";
         }
-        serial_multi_fp_ns = runSerialMultiFp(W, ie, iv);
-        cerr << "  serial QuART_multi_fp<" << W << "> : " << setw(7)
-             << serial_multi_fp_ns / 1'000'000 << " ms\n";
     } else {
         cerr << "  serial baselines skipped (--no-serial)\n";
     }
@@ -596,12 +562,12 @@ int main(int argc, char** argv) {
          << setprecision(2) << stail_vs_nofp << "x\n";
     cerr << "  ALL " << total << " keys verified present (both variants).\n";
 
-    // CSV: mode,W,per_stream,total,serial_art_ns,serial_multi_fp_ns,
+    // CSV: mode,W,per_stream,total,serial_art_ns,
     //      olc_nofp_ns,olc_stail_ns,nofp_Mips,stail_Mips,nofp_xART,stail_xART,
     //      stail_vs_nofp
-    printf("%s,%zu,%zu,%zu,%lld,%lld,%lld,%lld,%.2f,%.2f,%.2f,%.2f,%.3f\n",
+    printf("%s,%zu,%zu,%zu,%lld,%lld,%lld,%.2f,%.2f,%.2f,%.2f,%.3f\n",
            mode.c_str(), W, per_stream, total, serial_art_ns,
-           serial_multi_fp_ns, conc_nofp_ns, conc_stail_ns, nofp_mips,
+           conc_nofp_ns, conc_stail_ns, nofp_mips,
            stail_mips, (double)serial_art_ns / conc_nofp_ns,
            (double)serial_art_ns / conc_stail_ns, stail_vs_nofp);
     return 0;

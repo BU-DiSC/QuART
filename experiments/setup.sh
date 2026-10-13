@@ -5,8 +5,8 @@
 # Run once (or call from any experiment run.sh) to:
 #   1. Clone and build BoDS workload generator (https://github.com/BU-DiSC/bods)
 #   2. Generate all workload .bin files needed by the experiments
-#   3. Clone the quick-insertion-tree dependency into experiments/5-tree-comparison/
-#   4. Build the Qu-ART project (CMake)
+#   3. Clone the quick-insertion-tree dependency into experiments/4.1-bods/
+#   4. Build the QuART project (CMake)
 #
 # Already-done steps are skipped automatically (idempotent).
 #
@@ -24,8 +24,8 @@ EXPERIMENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$EXPERIMENTS_DIR/.." && pwd)"
 BUILD="$REPO_ROOT/build"
 BODS_DIR="${BODS_DIR:-$EXPERIMENTS_DIR/bods}"
-QUIT_DIR="$EXPERIMENTS_DIR/5.1-bods-experiments/quick-insertion-tree"
-BODS_EXP_QUIT_DIR="$EXPERIMENTS_DIR/5.1-bods-experiments/quick-insertion-tree"
+QUIT_DIR="$EXPERIMENTS_DIR/4.1-bods/quick-insertion-tree"
+BODS_EXP_QUIT_DIR="$EXPERIMENTS_DIR/4.1-bods/quick-insertion-tree"
 JOBS="${JOBS:-$(nproc)}"
 
 echo "=== Qu-ART artifact setup ==="
@@ -109,7 +109,13 @@ EOF
     rm -f "$TOML"
 }
 
-# --- 5.1 / 5.2  K-L grid, N=500M ---
+# The heavy N=500M (§4.1/§4.2) + TPC-H generation below can be skipped by
+# setting GEN_WORKLOADS=0 — e.g. the §4.4 concurrent experiment sources setup
+# only for the BoDS clone/build and the project build, then generates its own
+# small per-stream N=20M files.
+if [[ "${GEN_WORKLOADS:-1}" == "1" ]]; then
+
+# --- §4.1 BoDS + §4.2 TPC-H: K-L grid, N=500M ---
 N=500000000
 echo "[setup] Checking N=${N} workloads..."
 generate_workload "$N" 0 0
@@ -118,11 +124,11 @@ for K in 1 5 10 25 100; do
         generate_workload "$N" "$K" "$L"
     done
 done
-# K=3 and K=50 at L=1 needed by experiment 5.1-NEW-quit-style-chart
+# K=3 and K=50 at L=1 (extra points for the §4.1 throughput-vs-K curve)
 generate_workload "$N" 3  1
 generate_workload "$N" 50 1
 
-# --- 5.3  TPC-H-inspired workload ---
+# --- §4.2 TPC-H-inspired workload ---
 # K≈96.67 L≈0.1 over N=6M keys (per SWARE methodology).
 # BoDS encodes these as K=9667, L=01 in the filename (×100 and ×10 resp.).
 # The generator accepts floats for K and L.
@@ -157,6 +163,10 @@ else
     echo "[setup] TPC-H workload already present"
 fi
 
+else
+    echo "[setup] GEN_WORKLOADS=0 — skipping N=500M / TPC-H workload generation"
+fi
+
 # Export so run.sh scripts pick it up without extra flags
 export WORKLOAD_DIR
 
@@ -173,15 +183,15 @@ for _QDIR in "$QUIT_DIR" "$BODS_EXP_QUIT_DIR"; do
 done
 
 # ---------------------------------------------------------------------------
-# 4. Build Qu-ART
+# 4. Build QuART (run + concurrent benchmarks)
 # ---------------------------------------------------------------------------
 mkdir -p "$BUILD"
-if [[ ! -x "$BUILD/run" ]]; then
-    echo "[setup] Building Qu-ART..."
+if [[ ! -x "$BUILD/run" || ! -x "$BUILD/test_conc_olc" || ! -x "$BUILD/test_conc_olc_readwrite" ]]; then
+    echo "[setup] Building QuART..."
     cmake -S "$REPO_ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
     make -C "$BUILD" -j"$JOBS"
 else
-    echo "[setup] Qu-ART binaries already built"
+    echo "[setup] QuART binaries already built"
 fi
 
 echo ""

@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Experiment 5.4: Bulk Loading Performance
+# Experiment 4.3 (§4.3): Bulk Loading Performance
 #
 # Compares standard repeated ART insertion against QuART grouped bulk loading
 # for increasing numbers of sorted keys (100M to 2B).  Output corresponds to
-# Figure 11 in the paper: insertion time vs. number of elements.
+# Figure 13 in the paper: insertion time vs. number of elements.
 #
 # Both regular and bulk-load paths generate sequential keys 1..N synthetically
 # (no workload file required), guaranteeing a fully sorted input.
 #
 # Usage:
-#   bash experiments/5.4-bulkload/run.sh
+#   bash experiments/4.3-bulkload/run.sh
 #
 # Environment variables (all optional):
 #   REPEAT         – number of timed repetitions per configuration (default: 5)
 #
 # Output:
-#   experiments/5.4-bulkload/results/results_<TIMESTAMP>.csv
+#   experiments/4.3-bulkload/results/results_<TIMESTAMP>.csv
 #
 # CSV columns:
 #   N, insertion_method, avg_insert_ns, avg_query_ns
 #
 #   insertion_method: "regular" or "bulkload"
-#   Speedup (Figure 11) = regular_time / bulkload_time at each N.
+#   Speedup (Figure 13) = regular_time / bulkload_time at each N.
 
 set -euo pipefail
 
@@ -34,7 +34,7 @@ source "$SCRIPT_DIR/../setup.sh"
 
 REPEAT="${REPEAT:-5}"
 
-# Test sizes matching Figure 11 (100M to 2B)
+# Test sizes matching Figure 13 (100M to 2B)
 TEST_SIZES=(100000000 250000000 500000000 750000000 1000000000 1500000000 2000000000)
 
 SUFFIX=$(date +"%Y%m%d_%H%M%S")
@@ -44,7 +44,7 @@ LOG_DIR="$RESULTS_DIR/logs_${SUFFIX}"
 
 mkdir -p "$RESULTS_DIR" "$LOG_DIR"
 
-echo "Experiment 5.4 — Bulk Loading Performance"
+echo "Experiment 4.3 — Bulk Loading Performance"
 echo "  REPEAT        : $REPEAT"
 echo "  Results       : $RESULTS_FILE"
 echo "  Logs          : $LOG_DIR"

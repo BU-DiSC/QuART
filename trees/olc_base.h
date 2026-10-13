@@ -77,24 +77,10 @@ namespace ART {
 //   maxPrefixLength).  Intended use is parallel-insert → join() → verify;
 //   concurrent lookups are not supported.
 //
-// A NOTE ON ThreadSanitizer (important).
-//   An exclusive-latch-coupling descent would be TSan-CLEAN because every read
-//   holds a latch, so TSan sees a happens-before edge on every node access. OLC
-//   is TSan-DIRTY BY CONSTRUCTION: a descender reads a node's plain fields
-//   (prefix, count, child pointers, the &root slot) WITHOUT a lock, then
-//   validates the version and restarts if a writer touched it.  TSan cannot see
-//   that the version check discards a torn read, so it reports these
-//   optimistic-read / locked-write pairs as data races.  They are benign and
-//   validated — the same property the reference ARTOLC implementation has — and
-//   correct on x86-TSO where word-sized aligned accesses don't tear and the
-//   acquire/release fences on the version word order a validated read.
-//   WRITER–WRITER races are impossible: a node maps to exactly one version word
-//   and the CAS upgrade gives mutual exclusion, so two writers of the same node
-//   always serialize.  Functional correctness is checked the hard way — verify
-//   EVERY key after join — and is ASan-clean.  If you must silence TSan,
-//   suppress the optimistic-read frames in descendAndInsert (do NOT "fix" them
-//   by latching reads — the exclusive-latch design these variants exist to
-//   avoid).
+// WRITER–WRITER races are impossible: a node maps to exactly one version word
+// and the CAS upgrade gives mutual exclusion, so two writers of the same node
+// always serialize.  Functional correctness is checked the hard way — verify
+// EVERY key after join — and is ASan-clean.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // OLC version+lock word, cache-line padded so hot nodes (the root, upper
@@ -175,6 +161,61 @@ class QuART_conc_olc_base : public QuART {
     }
 
     int getNumThreads() const { return numThreads_; }
+
+    // Optimistic-Lock-Coupling concurrent lookup — SAFE to run concurrently with
+    // descendAndInsert writers on the same tree (unlike ART::lookup, which has
+    // no version checks).  Mirrors the insert descent's version protocol: read a
+    // node's version, read its prefix/child optimistically, checkOrRestart the
+    // version before trusting anything, and restart from the root on any
+    // invalidation.  Never writes shared memory (pure reader), so the root's
+    // version line stays SHARED across cores and never bounces.  Returns the
+    // matching leaf (tagged pointer) or nullptr if the key is absent.
+    ArtNode* olcLookup(uint8_t key[]) {
+    restart:
+        OlcLock* parentLk = &rootVer_;
+        uint64_t pv = olcReadLock(parentLk->w);
+        ArtNode* node = root;  // read under the acquired parent read-version
+        unsigned depth = 0;
+
+        for (;;) {
+            if (node == nullptr) {
+                if (!olcCheck(parentLk->w, pv)) goto restart;
+                return nullptr;  // empty slot ⇒ absent
+            }
+            if (isLeaf(node)) {
+                // The slot/pointer we followed must still be current; a leaf is
+                // an immutable tagged pointer, so its value is stable once the
+                // pointer is validated.  Compare the full key.
+                if (!olcCheck(parentLk->w, pv)) goto restart;
+                uint8_t leafKey[maxPrefixLength];
+                loadKey(getLeafValue(node), leafKey);
+                for (unsigned i = 0; i < maxPrefixLength; i++)
+                    if (leafKey[i] != key[i]) return nullptr;
+                return node;
+            }
+
+            OlcLock* nodeLk = &stripeVer(node);
+            uint64_t v = olcReadLock(nodeLk->w);
+            // The pointer we followed to `node` must still be valid.
+            if (!olcCheck(parentLk->w, pv)) goto restart;
+
+            if (node->prefixLength) {
+                unsigned mm = prefixMismatch(node, key, depth, maxPrefixLength);
+                if (!olcCheck(nodeLk->w, v)) goto restart;  // prefix read valid
+                if (mm != node->prefixLength) return nullptr;  // absent
+                depth += node->prefixLength;
+            }
+
+            ArtNode** childRef = findChild(node, key[depth]);
+            ArtNode* child = *childRef;
+            if (!olcCheck(nodeLk->w, v)) goto restart;  // child ptr consistent
+
+            parentLk = nodeLk;
+            pv = v;
+            node = child;
+            depth += 1;
+        }
+    }
 
 #ifdef QUART_CONC_STATS
     struct ConcStats {

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Experiment: ART vs QuART_tail, QuART_lil, QuART_stail over selected K-L configs (N=500M).
+# Experiment: QuART_stail vs QuIT over the full K-L sortedness grid (N=500M).
+# Speedup = QuIT time / QuART_stail time for each (K,L) cell.
 #
 # Usage:
-#   bash experiments/5.1-bods-experiments/quart-vs-art/run.sh
+#   bash experiments/4.1-bods/stail-vs-quit/run.sh
 #
 # Environment variables (all optional):
 #   WORKLOAD_DIR  – directory containing BoDS workload .bin files
-#   REPEAT        – number of timed repetitions per configuration (default: 5)
+#   REPEAT        – number of timed repetitions per configuration (default: 1)
 #
 # Output:
-#   experiments/5.1-bods-experiments/quart-vs-art/results/results_<TIMESTAMP>.csv
+#   experiments/4.1-bods/stail-vs-quit/results/results_<TIMESTAMP>.csv
 #
 # CSV columns:
 #   workload, K, L, tree_type, avg_insert_ns, avg_query_ns
@@ -20,17 +21,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARENT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PARENT_DIR/../.." && pwd)"
 BUILD="$REPO_ROOT/build"
+QUIT_DIR="$PARENT_DIR/quick-insertion-tree"
+QUIT_BUILD="$PARENT_DIR/build"
 JOBS="${JOBS:-$(nproc)}"
 
 source "$REPO_ROOT/experiments/setup.sh"
 
 # ---------------------------------------------------------------------------
-# Build the project in Release mode
+# Clone quick-insertion-tree into the shared parent dir if not already present
 # ---------------------------------------------------------------------------
-echo "=== Building QuART (Release) ==="
-cmake -S "$REPO_ROOT" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -Wno-dev
-make -C "$BUILD" -j"$JOBS" run
-echo ""
+if [[ ! -d "$QUIT_DIR" ]]; then
+    echo "[4.1-bods] Cloning quick-insertion-tree..."
+    git clone https://github.com/BU-DiSC/quick-insertion-tree.git "$QUIT_DIR"
+else
+    echo "[4.1-bods] quick-insertion-tree already present"
+fi
+
+# ---------------------------------------------------------------------------
+# Build quit and bptree from the shared CMakeLists.txt
+# ---------------------------------------------------------------------------
+if [[ ! -x "$QUIT_BUILD/quit_2k" || ! -x "$QUIT_BUILD/quit_4k" || ! -x "$QUIT_BUILD/bptree" ]]; then
+    echo "[4.1-bods] Building quit and bptree..."
+    mkdir -p "$QUIT_BUILD"
+    cmake -S "$PARENT_DIR" -B "$QUIT_BUILD" -DCMAKE_BUILD_TYPE=Release -Wno-dev
+    make -C "$QUIT_BUILD" -j"$JOBS"
+fi
 
 N=500000000
 REPEAT="${REPEAT:-1}"
@@ -42,7 +57,7 @@ LOG_DIR="$RESULTS_DIR/logs_${SUFFIX}"
 
 mkdir -p "$RESULTS_DIR" "$LOG_DIR"
 
-echo "Experiment: ART vs QuART_tail / QuART_lil / QuART_stail"
+echo "Experiment: QuART_stail vs QuIT (full K-L grid)"
 echo "  WORKLOAD_DIR : $WORKLOAD_DIR"
 echo "  REPEAT       : $REPEAT"
 echo "  Results      : $RESULTS_FILE"
@@ -51,20 +66,32 @@ echo ""
 
 echo "workload,K,L,tree_type,avg_insert_ns,avg_query_ns" > "$RESULTS_FILE"
 
-TREES=(ART QuART_tail QuART_lil QuART_stail)
+TREES=(QuART_stail QuIT_2k QuIT_4k)
 
 run_config() {
     local FILE="$1" N_VAL="$2" K_VAL="$3" L_VAL="$4" TREE="$5"
-    local WNAME LOG INSERT_SUM QUERY_SUM FAILED
+    local WNAME LOG INSERT_SUM QUERY_SUM FAILED BINARY
     WNAME="$(basename "$FILE" .bin)"
     LOG="$LOG_DIR/${WNAME}_${TREE}.log"
     INSERT_SUM=0; QUERY_SUM=0; FAILED=0
+
+    if [[ "$TREE" == "QuIT_2k" ]]; then
+        BINARY="$QUIT_BUILD/quit_2k"
+    elif [[ "$TREE" == "QuIT_4k" ]]; then
+        BINARY="$QUIT_BUILD/quit_4k"
+    else
+        BINARY="$BUILD/run"
+    fi
 
     echo "=== workload=$WNAME  tree=$TREE ===" > "$LOG"
 
     for ((i=1; i<=REPEAT; i++)); do
         echo "--- Run $i/$REPEAT ---" >> "$LOG"
-        OUTPUT=$("$BUILD/run" -f "$FILE" -N "$N_VAL" -t "$TREE" 2>>"$LOG") || true
+        if [[ "$TREE" == "QuIT_2k" || "$TREE" == "QuIT_4k" ]]; then
+            OUTPUT=$("$BINARY" -f "$FILE" -N "$N_VAL" 2>>"$LOG") || true
+        else
+            OUTPUT=$("$BINARY" -f "$FILE" -N "$N_VAL" -t "$TREE" 2>>"$LOG") || true
+        fi
         STATUS=$?
         echo "$OUTPUT" >> "$LOG"
         if [[ $STATUS -ne 0 || -z "$OUTPUT" ]]; then
@@ -87,7 +114,7 @@ run_config() {
     fi
 }
 
-# K=0, L=0 (fully sorted)
+# K=0, L=0 — fully sorted
 FILE="$WORKLOAD_DIR/workload_N${N}_K0_L0.bin"
 if [[ -f "$FILE" ]]; then
     echo ">>> K=0  L=0  (fully sorted)"
@@ -96,16 +123,17 @@ else
     echo "[SKIP] Missing: $FILE" >&2
 fi
 
-# L=1, K ∈ {1,3,5,10,25,50,100}
-L=1
-for K in 1 3 5 10 25 50 100; do
-    FILE="$WORKLOAD_DIR/workload_N${N}_K${K}_L${L}.bin"
-    if [[ -f "$FILE" ]]; then
-        echo ">>> K=$K  L=$L"
-        for TREE in "${TREES[@]}"; do run_config "$FILE" "$N" "$K" "$L" "$TREE"; done
-    else
-        echo "[SKIP] Missing: $FILE" >&2
-    fi
+# K ∈ {1,5,10,25,100} × L ∈ {1,5,10,25,100}
+for K in 1 5 10 25 100; do
+    for L in 1 5 10 25 100; do
+        FILE="$WORKLOAD_DIR/workload_N${N}_K${K}_L${L}.bin"
+        if [[ -f "$FILE" ]]; then
+            echo ">>> K=$K  L=$L"
+            for TREE in "${TREES[@]}"; do run_config "$FILE" "$N" "$K" "$L" "$TREE"; done
+        else
+            echo "[SKIP] Missing: $FILE" >&2
+        fi
+    done
 done
 
 echo ""

@@ -76,9 +76,9 @@ struct alignas(64) ConcOlcCtx {
 // word (the price of being concurrency-safe).  So it makes the same choices as
 // stail and is a hair slower per op; with many threads it scales like OLC ART.
 //
-// Correctness / TSan: identical model to QuART_conc_olc_art (verify-every-key
-// after join; TSan-dirty by construction — see olc_base.h).  reclaimNode +
-// deferred reclamation make a restored-but-obsoleted tail safe to inspect.
+// Correctness: identical model to QuART_conc_olc_art (verify-every-key after
+// join — see olc_base.h).  reclaimNode + deferred reclamation make a
+// restored-but-obsoleted tail safe to inspect.
 // ─────────────────────────────────────────────────────────────────────────────
 class QuART_conc_olc_stail : public QuART_conc_olc_base {
    public:
@@ -269,6 +269,35 @@ class QuART_conc_olc_stail : public QuART_conc_olc_base {
     bool tryFastAppend(ConcOlcCtx& c, uint8_t key[], uintptr_t value) {
         STAIL_FP_BUMP(fp_attempt_);
         std::atomic<uint64_t>& w = stripeVer(c.fp).w;
+#ifndef QUART_STAIL_LOCKED_APPEND
+        // ── LOCK-FREE fast path: append into a Node256 tail ──
+        // OLC's per-append write-lock is unnecessarily pessimistic here.  A
+        // Node256 leaf-parent is TERMINAL (never grows/splits/frees), so c.fp is
+        // stable; and for a sorted stream successive keys have DISTINCT last
+        // bytes, so each append writes a DISTINCT child slot.  Concurrent
+        // appends to the same Node256 (even across streams that share this
+        // subtree, since distinct keys ⇒ distinct branch bytes in a shared
+        // leaf-parent) therefore never collide.  So we store child[b] WITHOUT
+        // write-locking the node's version word: the tail's version line stays
+        // SHARED across cores instead of bouncing to Modified on every insert —
+        // removing the uncontended-atomic "safety tax" that made even 1-thread
+        // stail slower than serial stail.  Guard: read the node version, confirm
+        // the type snapshot is coherent (no writer held/holds the lock), then
+        // store.  count is advisory for a Node256 (lookups index child[]
+        // directly; the node never grows) so it is left untouched — matching the
+        // pool's tryFastAppendVersioned Node256 path.  Any non-coherent snapshot
+        // or non-Node256 tail falls through to the locked path below.
+        {
+            uint64_t v = olcReadLock(w);
+            ArtNode* fp = c.fp;
+            if (fp->type == NodeType256 && olcCheck(w, v)) {
+                static_cast<Node256*>(fp)->child[key[c.fp_depth]] =
+                    makeLeaf(value);
+                STAIL_FP_BUMP(fp_success_);
+                return true;
+            }
+        }
+#endif
 #ifdef QUART_STAIL_FP_STATS
         // Instrumented tail-node write-lock: charge a contention event when the
         // word can't be grabbed on the first try (another thread holds it, or

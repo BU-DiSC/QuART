@@ -9,7 +9,7 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 # quick-insertion-tree is cloned into this directory by the run scripts.
-# CMAKE_CURRENT_SOURCE_DIR is experiments/5.1-bods-experiments/, so
+# CMAKE_CURRENT_SOURCE_DIR is experiments/4.1-bods/, so
 # #include "quick-insertion-tree/src/bptree/..." resolves correctly.
 
 add_executable(quit_2k run_quit.cpp)

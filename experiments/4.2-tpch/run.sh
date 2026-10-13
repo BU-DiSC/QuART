@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Experiment 5.3: TPC-H workload
+# Experiment 4.2 (§4.2): TPC-H workload
 #
 # Runs B+-tree (BPTree), QuIT, ART, QuART_tail, QuART_lil, and QuART_stail
 # on a TPC-H-inspired near-sorted workload derived from the lineitem table
-# (N=6M, K≈96.67%, L≈0.1%).  Output corresponds to Figure 10 in the paper:
+# (N=6M, K≈96.67%, L≈0.1%).  Output corresponds to Figure 12 in the paper:
 # insertion and query throughput on the TPC-H workload.
 #
 # Usage:
-#   bash experiments/5.3-tpch/run.sh
+#   bash experiments/4.2-tpch/run.sh
 #
 # Environment variables (all optional):
 #   WORKLOAD_FILE  – path to the TPC-H .bin workload file
@@ -16,28 +16,29 @@
 #                    (set to 200 to reproduce the paper's numbers; substantially longer)
 #
 # Output:
-#   experiments/5.3-tpch/results/results_<TIMESTAMP>.csv
+#   experiments/4.2-tpch/results/results_<TIMESTAMP>.csv
 #
 # CSV columns:
 #   tree_type, avg_insert_ns, avg_query_ns
 #
-#   Throughput (Figure 10) = N / (time_ns / 1e9)  ops/sec, where N=6000000.
+#   Throughput (Figure 12) = N / (time_ns / 1e9)  ops/sec, where N=6000000.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BUILD="$REPO_ROOT/build"
-QUIT_BUILD="$REPO_ROOT/experiments/5.2-quart-vs-quit/build"
+QUIT_BUILD="$REPO_ROOT/experiments/4.1-bods/build"
 JOBS="${JOBS:-$(nproc)}"
 
 # Bootstrap: clone deps, generate workloads, build main binaries (idempotent)
 source "$SCRIPT_DIR/../setup.sh"
 
-# Build the QuIT binaries (from experiment 5.2) if not already built
-if [[ ! -x "$QUIT_BUILD/run_quit_2k" || ! -x "$QUIT_BUILD/run_quit_base_2k" ]]; then
-    echo "[5.3] Building QuIT binaries..."
-    QUIT_SRC="$REPO_ROOT/experiments/5.2-quart-vs-quit"
+# Build the QuIT / B+-tree binaries (shared CMakeLists in 4.1-bods) if needed.
+# Targets: quit_2k (QuIT, QUIT_FAT fast path) and bptree (plain B+-tree).
+if [[ ! -x "$QUIT_BUILD/quit_2k" || ! -x "$QUIT_BUILD/bptree" ]]; then
+    echo "[4.2] Building QuIT / B+-tree binaries..."
+    QUIT_SRC="$REPO_ROOT/experiments/4.1-bods"
     mkdir -p "$QUIT_BUILD"
     cmake -S "$QUIT_SRC" -B "$QUIT_BUILD" -DCMAKE_BUILD_TYPE=Release -Wno-dev
     make -C "$QUIT_BUILD" -j"$JOBS"
@@ -54,7 +55,7 @@ LOG_DIR="$RESULTS_DIR/logs_${SUFFIX}"
 
 mkdir -p "$RESULTS_DIR" "$LOG_DIR"
 
-echo "Experiment 5.3 — TPC-H workload"
+echo "Experiment 4.2 — TPC-H workload"
 echo "  WORKLOAD_FILE : $WORKLOAD_FILE"
 echo "  N             : $N"
 echo "  REPEAT        : $REPEAT"
@@ -75,10 +76,12 @@ run_config() {
     local LOG="$LOG_DIR/${TREE}.log"
     local INSERT_SUM=0 QUERY_SUM=0 FAILED=0
 
-    # QuIT binaries live in the 5.2 build directory
-    local BINARY_PATH
-    if [[ "$BINARY" == run_quit* ]]; then
+    # QuIT / B+-tree binaries live in the 4.1-bods build dir and are compiled for
+    # a single tree (no -t flag); ART/QuART variants use the main `run` with -t.
+    local BINARY_PATH IS_QUIT=0
+    if [[ "$BINARY" == quit_* || "$BINARY" == bptree ]]; then
         BINARY_PATH="$QUIT_BUILD/$BINARY"
+        IS_QUIT=1
     else
         BINARY_PATH="$BUILD/$BINARY"
     fi
@@ -88,7 +91,11 @@ run_config() {
 
     for ((i=1; i<=REPEAT; i++)); do
         echo "--- Run $i/$REPEAT ---" >> "$LOG"
-        OUTPUT=$("$BINARY_PATH" -f "$WORKLOAD_FILE" -N "$N" -t "$TREE" 2>>"$LOG") || true
+        if [[ $IS_QUIT -eq 1 ]]; then
+            OUTPUT=$("$BINARY_PATH" -f "$WORKLOAD_FILE" -N "$N" 2>>"$LOG") || true
+        else
+            OUTPUT=$("$BINARY_PATH" -f "$WORKLOAD_FILE" -N "$N" -t "$TREE" 2>>"$LOG") || true
+        fi
         STATUS=$?
         echo "$OUTPUT" >> "$LOG"
 
@@ -116,12 +123,12 @@ run_config() {
 # ---------------------------------------------------------------------------
 # B+-tree baseline (no fast path)
 # ---------------------------------------------------------------------------
-run_config "run_quit_base_2k" "BPTree"
+run_config "bptree" "BPTree"
 
 # ---------------------------------------------------------------------------
 # QuIT (Quick Insertion Tree — full fast path)
 # ---------------------------------------------------------------------------
-run_config "run_quit_2k" "QuIT"
+run_config "quit_2k" "QuIT"
 
 # ---------------------------------------------------------------------------
 # ART and QuART variants

@@ -7,7 +7,7 @@
 
 namespace ART {
 void Node4::bulkLoadInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                    ArtNode* child, ArtNode*& bl_ptr) {
+                    ArtNode* child, ArtNode*& cursor) {
     // Insert leaf into inner node
     if (this->count < 4) {
         // Insert element
@@ -26,19 +26,19 @@ void Node4::bulkLoadInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
         // Grow to Node16
         Node16* newNode = new Node16();
         *nodeRef = newNode;
-        bl_ptr = newNode; // update bulk load pointer to new node
+        cursor = newNode; // keep the bulk-load cursor valid after this node grew
         newNode->count = 4;
         copyPrefix(this, newNode);
         for (unsigned i = 0; i < 4; i++)
             newNode->key[i] = flipSign(this->key[i]);
         memcpy(newNode->child, this->child, this->count * sizeof(uintptr_t));
         delete this;
-        return newNode->bulkLoadInsertNode16(tree, nodeRef, keyByte, child, bl_ptr);
+        return newNode->bulkLoadInsertNode16(tree, nodeRef, keyByte, child, cursor);
     }
 }
 
 void Node16::bulkLoadInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                        ArtNode* child, ArtNode*& bl_ptr) {
+                        ArtNode* child, ArtNode*& cursor) {
     // Insert leaf into inner node
     if (this->count < 16) {
         // Insert element
@@ -76,19 +76,19 @@ void Node16::bulkLoadInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
         // Grow to Node48
         Node48* newNode = new Node48();
         *nodeRef = newNode;
-        bl_ptr = newNode; // update bulk load pointer to new node
+        cursor = newNode; // keep the bulk-load cursor valid after this node grew
         memcpy(newNode->child, this->child, this->count * sizeof(uintptr_t));
         for (unsigned i = 0; i < this->count; i++)
             newNode->childIndex[flipSign(this->key[i])] = i;
         copyPrefix(this, newNode);
         newNode->count = this->count;
         delete this;
-        return newNode->bulkLoadInsertNode48(tree, nodeRef, keyByte, child, bl_ptr);
+        return newNode->bulkLoadInsertNode48(tree, nodeRef, keyByte, child, cursor);
     }
 }
 
 void Node48::bulkLoadInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child, ArtNode*& bl_ptr) {
+                          ArtNode* child, ArtNode*& cursor) {
     // Insert leaf into inner node
     if (this->count < 48) {
         // Insert element
@@ -110,15 +110,15 @@ void Node48::bulkLoadInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
         newNode->count = this->count;
         copyPrefix(this, newNode);
         *nodeRef = newNode;
-        bl_ptr = newNode; // update bulk load pointer to new node
+        cursor = newNode; // keep the bulk-load cursor valid after this node grew
         delete this;
-        return newNode->bulkLoadInsertNode256(tree, nodeRef, keyByte, child, bl_ptr);
+        return newNode->bulkLoadInsertNode256(tree, nodeRef, keyByte, child, cursor);
     }
 }
 
 void Node256::bulkLoadInsertNode256(ART* tree [[maybe_unused]],
                             ArtNode** nodeRef [[maybe_unused]], uint8_t keyByte,
-                            ArtNode* child, ArtNode*& bl_ptr) {
+                            ArtNode* child, ArtNode*& cursor) {
     // Insert leaf into inner node
     // No memmove needed here because Node256 uses a direct mapping for all
     // possible keys.

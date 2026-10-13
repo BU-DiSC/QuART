@@ -28,8 +28,8 @@ if [[ "${1:-}" == "--yes" ]]; then
 fi
 
 BODS_DIR="${BODS_DIR:-$SCRIPT_DIR/bods}"
-QUIT_DIR="$SCRIPT_DIR/5.2-quart-vs-quit/quick-insertion-tree"
-QUIT_BUILD="$SCRIPT_DIR/5.2-quart-vs-quit/build"
+QUIT_DIR="$SCRIPT_DIR/4.1-bods/quick-insertion-tree"
+QUIT_BUILD="$SCRIPT_DIR/4.1-bods/build"
 BUILD="$REPO_ROOT/build"
 
 remove() {

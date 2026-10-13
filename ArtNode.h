@@ -99,7 +99,7 @@ struct Node4 : ArtNode {
     void insertNode4PreserveFp(ART* tree, ArtNode** nodeRef,
                                     uint8_t keyByte, ArtNode* child);
     void bulkLoadInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child, ArtNode*& bl_ptr);
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node4
     void eraseNode4(ART* tree, ArtNode** nodeRef, ArtNode** leafPlace);
 };
@@ -123,7 +123,7 @@ struct Node16 : ArtNode {
     void insertNode16PreserveFp(ART* tree, ArtNode** nodeRef,
                                      uint8_t keyByte, ArtNode* child);
     void bulkLoadInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child, ArtNode*& bl_ptr);
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node16
     void eraseNode16(ART* tree, ArtNode** nodeRef, ArtNode** leafPlace);
 };
@@ -147,7 +147,7 @@ struct Node48 : ArtNode {
     void insertNode48PreserveFp(ART* tree, ArtNode** nodeRef,
                                      uint8_t keyByte, ArtNode* child);
     void bulkLoadInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child, ArtNode*& bl_ptr);
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node48
     void eraseNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte);
 };
@@ -165,7 +165,7 @@ struct Node256 : ArtNode {
     void insertNode256ChangeFp(ART* tree, ArtNode** nodeRef,
                                     uint8_t keyByte, ArtNode* child);
     void bulkLoadInsertNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child, ArtNode*& bl_ptr);
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node256
     void eraseNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte);
 };
@@ -455,7 +455,14 @@ ArtNode** findChild(ArtNode* n, uint8_t keyByte) {
             return &(node->child[keyByte]);
         }
     }
-    throw;  // Unreachable
+    // Unreachable under single-threaded use (type is always one of the four).
+    // Under the concurrent OLC descent, however, an optimistic reader can call
+    // findChild on a node a concurrent grower just stamped NodeTypeObsolete
+    // (type == -1) before its version check restarts the descent.  Return the
+    // "search failed" sentinel (as the not-found branches do) instead of the
+    // bare `throw` (which would std::terminate): the caller's olcCheck then sees
+    // the bumped version and restarts.  Never taken by serial callers.
+    return &nullNode;
 }
 
 ArtNode* minimum(ArtNode* node) {
