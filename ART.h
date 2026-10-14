@@ -91,202 +91,101 @@ class ART {
         return false;
     }
 
-    // Grouped bulk loading for a sorted, gap-free workload of 32-bit keys
-    // (paper §3.4, Algorithm 2).  Keys are processed one 256-key group at a
-    // time: all 256 keys of a group share the upper three bytes (b0,b1,b2) and
-    // differ only in the final byte b3 (0..255), so they drop directly into a
-    // depth-3 Node256 as its 256 slots, with no per-key root-down traversal.
-    // Each group is classified against the previous group's prefix (Table 2):
-    //   BL_FP_INSERT : same (b0,b1) prefix, next b2  -> stay under `cursor`
-    //   BL_BRIDGE    : b2 wrapped 255->0, a new (b0,b1) parent is materialized
-    // `cursor` is the paper's single pointer to the node for the current (b0,b1)
-    // prefix, under which the group's Node256 hangs.
+    // Grouped bulk loading for a sorted workload of 32-bit keys, dense or not
+    // (paper §3.4, Algorithm 2).  Keys are processed one group at a time: a
+    // group is the maximal run of consecutive keys sharing the upper three
+    // bytes (b0,b1,b2); its 1..256 keys differ only in the final byte b3, so
+    // they drop directly into one depth-3 node, with no per-key root-down
+    // traversal.  The group node is allocated at its final size (the smallest
+    // of Node4/16/48/256 that fits), and a single-key group is stored as a
+    // bare leaf (lazy expansion).  Each group is classified against the
+    // previous group's prefix (Table 2):
+    //   BL_FP_INSERT : same (b0,b1) prefix          -> stay under `cursor`
+    //   BL_BRIDGE    : new (b0,b1) prefix (or first) -> move `cursor` to it
+    // `cursor` is the paper's single pointer to the node for the current
+    // (b0,b1) prefix, under which the group's node hangs.  Call
+    // compressTree() afterwards to restore prefix compression.
+    // Keys must be sorted and unique and the tree must be empty (or built
+    // only by bulkLoad, without compressTree in between).
     // NOTE: 32-bit-key-specific (fixed 4-level tree structure).  Calling it with
     // QUART_KEY_64 defined produces incorrect results; use regular insert()
     // for 64-bit keys instead.
     void bulkLoad(const std::vector<key_int_t>& keys, const std::vector<key_int_t>& values) {
-        ArtNode* cursor = nullptr;          // node for the current (b0,b1) prefix
-        ArtNode** cursorRef = &this->root;  // slot in cursor's parent holding it
-        std::array<uint8_t, 3> groupPrefix; // current group's (b0,b1,b2)
+        size_t n = keys.size();
+        if (n == 0) return;
+        if (root == nullptr) { Node4* r = new Node4(); r->prefixLength = 0; root = r; }
+        ArtNode** cursorRef = nullptr;      // slot holding the current (b0,b1) node
+        std::array<uint8_t, 2> groupPrefix = {{0, 0}}; // current (b0,b1)
 
-        // Calculate number of complete groups of 256
-        size_t num_complete_groups = (keys.size()-1) / 256;
-        size_t remaining_keys = (keys.size()-1) % 256;
-        // Special case: handle first group when root is null
-        if (root == nullptr) {
-            // Materialize root -> b0 -> b1 -> depth-3 Node256 for the first 256 keys
-            Node4* rootNode = new Node4();
-            rootNode->prefixLength = 0;
-            this->root = rootNode;
-            
-            Node4* b0Node = new Node4();
-            b0Node->prefixLength = 0;
-            rootNode->insertNode4(this, &this->root, 0, b0Node);
-            
-            Node4* b1Node = new Node4();
-            b1Node->prefixLength = 0;
-            b0Node->insertNode4(this, findChild(this->root, 0), 0, b1Node);
-            
-            Node256* groupNode = new Node256();
-            groupNode->prefixLength = 0;
-            
-            b1Node->insertNode4(this, findChild(*findChild(this->root, 0), 0), 0, groupNode);
-            
-            cursor = b1Node;
-            cursorRef = findChild(*findChild(this->root, 0), 0);
-            groupPrefix = {{0, 0, 0}};
-            
-            // Insert 256 keys into this group
-            for (size_t i = 1; i < 256; i++) {
-                uint8_t b3 = keys[i] & 0xFF;
-                groupNode->child[b3] = makeLeaf(values[i]);
-            }
-        }
-        
-        // Process complete groups of 256 keys
-        for (size_t group = 1; group < num_complete_groups; group++) {
-            size_t start_idx = group * 256;
-            
-            // Separate the first key of this group into big endian bytes
-            uint8_t b0 = (keys[start_idx] >> 24) & 0xFF;
-            uint8_t b1 = (keys[start_idx] >> 16) & 0xFF;
-            uint8_t b2 = (keys[start_idx] >> 8) & 0xFF;
-
-            // BL_BRIDGE at byte 0: b0 changed with b1=b2=0 (previous b0 was 255) -> new b0 parent
-            if (b0 != groupPrefix[0] && b1 == 0 && b2 == 0) {
-                Node4* newB0Node = new Node4();
-                newB0Node->prefixLength = 0;
-                switch (this->root->type) {
-                    case NodeType4:
-                        static_cast<Node4*>(this->root)->bulkLoadInsertNode4(this, &this->root, b0, newB0Node, cursor);
-                        break;
-                    case NodeType16:
-                        static_cast<Node16*>(this->root)->bulkLoadInsertNode16(this, &this->root, b0, newB0Node, cursor);
-                        break;
-                    case NodeType48:
-                        static_cast<Node48*>(this->root)->bulkLoadInsertNode48(this, &this->root, b0, newB0Node, cursor);
-                        break;
-                    case NodeType256:
-                        static_cast<Node256*>(this->root)->bulkLoadInsertNode256(this, &this->root, b0, newB0Node, cursor);
-                        break;
-                }
-                // hang a new b1 node under the new b0 node
-                ArtNode** b0Ref = findChild(this->root, b0);
-                ArtNode* b0Node = *b0Ref;
-                Node4* newB1Node = new Node4();
-                newB1Node->prefixLength = 0;
-                static_cast<Node4*>(b0Node)->bulkLoadInsertNode4(this, b0Ref, b1, newB1Node, cursor);
-                // advance cursor to the new (b0,b1) node
-                cursor = newB1Node;
-                cursorRef = findChild(*b0Ref, b1);
-                groupPrefix = {b0, 0, 0};
-
-                // materialize the group's Node256 under the new (b0,b1) node
-                Node256* groupNode = new Node256();
-                groupNode->prefixLength = 0;
-                static_cast<Node4*>(newB1Node)->bulkLoadInsertNode4(this, cursorRef, b2, groupNode, cursor);
-                // drop all 256 keys straight into the Node256 slots (b3 = slot index)
-                for (size_t i = 0; i < 256; i++) {
-                    uint8_t b3 = keys[start_idx + i] & 0xFF;
-                    groupNode->child[b3] = makeLeaf(values[start_idx + i]);
-                }
-                continue;
-            }
-            // BL_BRIDGE at byte 1: b1 changed with b2=0 (previous b1 was 255) -> new b1 node
-            else if (b0 == groupPrefix[0] && b1 != groupPrefix[1] && b2 == 0) {
-                ArtNode** b0Ref = findChild(this->root, b0);
-                ArtNode* b0Node = *b0Ref;
-                // create the new (b0,b1) node
-                Node4* newB1Node = new Node4();
-                newB1Node->prefixLength = 0;
-                switch (b0Node->type) {
-                    case NodeType4:
-                        static_cast<Node4*>(b0Node)->bulkLoadInsertNode4(this, b0Ref, b1, newB1Node, cursor);
-                        break;
-                    case NodeType16:
-                        static_cast<Node16*>(b0Node)->bulkLoadInsertNode16(this, b0Ref, b1, newB1Node, cursor);
-                        break;
-                    case NodeType48:
-                        static_cast<Node48*>(b0Node)->bulkLoadInsertNode48(this, b0Ref, b1, newB1Node, cursor);
-                        break;
-                    case NodeType256:
-                        static_cast<Node256*>(b0Node)->bulkLoadInsertNode256(this, b0Ref, b1, newB1Node, cursor);
-                        break;
-                }
-                // advance cursor to the new (b0,b1) node
-                cursor = newB1Node;
-                cursorRef = findChild(*b0Ref, b1);
-                groupPrefix[1] = b1;
-                groupPrefix[2] = 0;
-                
-                // materialize the group's Node256 under the new (b0,b1) node
-                Node256* groupNode = new Node256();
-                groupNode->prefixLength = 0;
-                static_cast<Node4*>(newB1Node)->bulkLoadInsertNode4(this, cursorRef, b2, groupNode, cursor);
-                // drop all 256 keys straight into the Node256 slots (b3 = slot index)
-                for (size_t i = 0; i < 256; i++) {
-                    uint8_t b3 = keys[start_idx + i] & 0xFF;
-                    groupNode->child[b3] = makeLeaf(values[start_idx + i]);
-                }              
-                continue;
-            }
-
-            // BL_FP_INSERT: get/create the group's Node256 at slot b2 under cursor
-            ArtNode** groupRef = findChild(cursor, b2);
-            Node256* groupNode;
-            
-            if (*groupRef == nullptr) {
-                // create the group's Node256
-                groupNode = new Node256();
-                groupNode->prefixLength = 0;
-                // insert it under cursor (growing cursor if needed)
-                switch (cursor->type) {
-                    case NodeType4:
-                        static_cast<Node4*>(cursor)->bulkLoadInsertNode4(this, cursorRef, b2, groupNode, cursor);
-                        break;
-                    case NodeType16:
-                        static_cast<Node16*>(cursor)->bulkLoadInsertNode16(this, cursorRef, b2, groupNode, cursor);
-                        break;
-                    case NodeType48:
-                        static_cast<Node48*>(cursor)->bulkLoadInsertNode48(this, cursorRef, b2, groupNode, cursor);
-                        break;
-                    case NodeType256:
-                        static_cast<Node256*>(cursor)->bulkLoadInsertNode256(this, cursorRef, b2, groupNode, cursor);
-                        break;
-                }
-                // Re-get the reference after potential expansion
-                groupRef = findChild(cursor, b2);
-                groupNode = static_cast<Node256*>(*groupRef);
+        size_t i = 0;
+        while (i < n) {
+            // the group is keys[i..j): the run sharing keys[i]'s upper three bytes
+            // (keys are sorted and unique, so a full group is detected in O(1))
+            size_t j;
+            if (i + 256 <= n && (keys[i + 255] >> 8) == (keys[i] >> 8)) {
+                j = i + 256;
             } else {
-                groupNode = static_cast<Node256*>(*groupRef);
+                j = i + 1;
+                while (j < n && (keys[j] >> 8) == (keys[i] >> 8)) j++;
             }
-            
-            // drop all 256 keys straight into the Node256 slots (b3 = slot index)
-            for (size_t i = 0; i < 256; i++) {
-                uint8_t b3 = keys[start_idx + i] & 0xFF;
-                groupNode->child[b3] = makeLeaf(values[start_idx + i]);
+
+            uint8_t b0 = (keys[i] >> 24) & 0xFF;
+            uint8_t b1 = (keys[i] >> 16) & 0xFF;
+            uint8_t b2 = (keys[i] >> 8) & 0xFF;
+
+            // BL_BRIDGE: getOrCreatePath(root, b0, b1) moves cursor to the new parent
+            if (cursorRef == nullptr || b0 != groupPrefix[0] || b1 != groupPrefix[1]) {
+                ArtNode** b0Ref = getOrCreateChild(&root, b0);
+                cursorRef = getOrCreateChild(b0Ref, b1);
+                groupPrefix = {{b0, b1}};
             }
-            
-            // Update groupPrefix to track current position
-            groupPrefix[2] = b2;
+
+            // BL_FP_INSERT (and after a bridge): hang the group's node at b2 under cursor
+            if (*findChild(*cursorRef, b2) == nullptr) {
+                appendChild(cursorRef, b2, buildGroup(keys, values, i, j));
+            } else {
+                // slot already populated (non-empty tree): fall back to per-key insert
+                for (size_t k = i; k < j; k++) bulkInsertOne(keys[k], values[k]);
+            }
+            i = j;
         }
-        
-        // Insert remaining keys that don't make a full group of 256
-        size_t start_idx2 = num_complete_groups * 256;
-        for (size_t i = 0; i <= remaining_keys; i++) {
-            //printf("Inserting remaining key %zu: %u\n", i, keys[start_idx2 + i]);
-            uint8_t key_bytes[4];
-            key_bytes[0] = (keys[start_idx2 + i] >> 24) & 0xFF;
-            key_bytes[1] = (keys[start_idx2 + i] >> 16) & 0xFF;
-            key_bytes[2] = (keys[start_idx2 + i] >> 8) & 0xFF;
-            key_bytes[3] = keys[start_idx2 + i] & 0xFF;
-            insert(this, root, &root, key_bytes, 0, values[start_idx2 + i], maxPrefixLength);
-        }
-        
-        return;
     }
 
-    // Insert one 32-bit key via the normal insert path (used for ragged ends of a range).
+    // Build the depth-3 node for group keys[i..j) at its final size: a bare
+    // leaf for one key, else the smallest node type that fits, filled in slot
+    // order (keys are sorted, so every b3 is appended after the previous one).
+    ArtNode* buildGroup(const std::vector<key_int_t>& keys, const std::vector<key_int_t>& values,
+                        size_t i, size_t j) {
+        size_t m = j - i;
+        if (m == 1) return makeLeaf(values[i]);
+        ArtNode* node;
+        if (m <= 4) {
+            Node4* g = new Node4();
+            for (size_t k = 0; k < m; k++) { g->key[k] = keys[i + k] & 0xFF; g->child[k] = makeLeaf(values[i + k]); }
+            node = g;
+        } else if (m <= 16) {
+            Node16* g = new Node16();
+            for (size_t k = 0; k < m; k++) { g->key[k] = flipSign(keys[i + k] & 0xFF); g->child[k] = makeLeaf(values[i + k]); }
+            node = g;
+        } else if (m <= 48) {
+            Node48* g = new Node48();
+            for (size_t k = 0; k < m; k++) { g->childIndex[keys[i + k] & 0xFF] = k; g->child[k] = makeLeaf(values[i + k]); }
+            node = g;
+        } else {
+            Node256* g = new Node256();
+            if (m == 256) {  // full group: b3 == k for every key
+                for (size_t k = 0; k < 256; k++) g->child[k] = makeLeaf(values[i + k]);
+            } else {
+                for (size_t k = 0; k < m; k++) g->child[keys[i + k] & 0xFF] = makeLeaf(values[i + k]);
+            }
+            node = g;
+        }
+        node->prefixLength = 0;
+        node->count = m;
+        return node;
+    }
+
+    // Insert one 32-bit key via the normal insert path (bulkLoad's fallback).
     inline void bulkInsertOne(key_int_t k, key_int_t v) {
         uint8_t kb[4];
         kb[0] = (k >> 24) & 0xFF; kb[1] = (k >> 16) & 0xFF;
@@ -295,15 +194,20 @@ class ART {
     }
 
     // Algorithm 2's getOrCreateChild: get the child slot for byte `b` under
-    // *parentRef, creating it (and growing the parent as needed) if absent.
-    // leafLevel => materialize a depth-3 Node256 (the group node), else a Node4
-    // path node. Returns a ref into the (possibly grown) parent's child array.
-    ArtNode** getOrCreateChild(ArtNode** parentRef, uint8_t b, bool leafLevel) {
+    // *parentRef, creating an empty Node4 path node there (and growing the
+    // parent as needed) if absent. Returns a ref into the (possibly grown)
+    // parent's child array.
+    ArtNode** getOrCreateChild(ArtNode** parentRef, uint8_t b) {
         ArtNode** cref = findChild(*parentRef, b);
         if (*cref != nullptr) return cref;
-        ArtNode* child = leafLevel ? static_cast<ArtNode*>(new Node256())
-                                   : static_cast<ArtNode*>(new Node4());
+        ArtNode* child = new Node4();
         child->prefixLength = 0;
+        appendChild(parentRef, b, child);
+        return findChild(*parentRef, b);  // parent may have grown
+    }
+
+    // Add `child` at byte `b` under *parentRef (growing the parent as needed).
+    void appendChild(ArtNode** parentRef, uint8_t b, ArtNode* child) {
         ArtNode* dummy = nullptr;
         ArtNode* parent = *parentRef;
         switch (parent->type) {
@@ -312,37 +216,6 @@ class ART {
             case NodeType48:  static_cast<Node48*>(parent)->bulkLoadInsertNode48(this, parentRef, b, child, dummy); break;
             case NodeType256: static_cast<Node256*>(parent)->bulkLoadInsertNode256(this, parentRef, b, child, dummy); break;
         }
-        return findChild(*parentRef, b);  // parent may have grown
-    }
-
-    // Bulk-load a CONTIGUOUS key range (keys[i] == keys[0]+i) at ANY offset.
-    // Generalizes bulkLoad (which requires keys[0]==0): the 256-value-aligned
-    // interior is filled group-by-group into Node256 leaves; the (<256) leading
-    // and trailing partials are inserted one-by-one. Caller should compressTree().
-    void bulkLoadRange(const std::vector<key_int_t>& keys, const std::vector<key_int_t>& values) {
-        size_t n = keys.size();
-        if (n == 0) return;
-        // first index whose value is 256-aligned (b3 == 0)
-        size_t firstAligned = 0;
-        while (firstAligned < n && (keys[firstAligned] & 0xFF) != 0) firstAligned++;
-        if (root == nullptr) { Node4* r = new Node4(); r->prefixLength = 0; root = r; }
-        // fill complete 256-aligned groups
-        size_t g = firstAligned;
-        while (g + 256 <= n) {
-            key_int_t V = keys[g];  // V & 0xFF == 0
-            uint8_t b0 = (V >> 24) & 0xFF, b1 = (V >> 16) & 0xFF, b2 = (V >> 8) & 0xFF;
-            // getOrCreatePath(root, b0, b1) then the group's Node256 at b2
-            ArtNode** b0Ref = getOrCreateChild(&root, b0, false);
-            ArtNode** b1Ref = getOrCreateChild(b0Ref, b1, false);
-            ArtNode** groupRef = getOrCreateChild(b1Ref, b2, true);
-            Node256* groupNode = static_cast<Node256*>(*groupRef);
-            for (size_t j = 0; j < 256; j++) groupNode->child[j] = makeLeaf(values[g + j]);
-            g += 256;
-        }
-        size_t endAligned = g;
-        // ragged ends via normal insert (disjoint b2 from the aligned groups)
-        for (size_t k = 0; k < firstAligned; k++) bulkInsertOne(keys[k], values[k]);
-        for (size_t k = endAligned; k < n; k++) bulkInsertOne(keys[k], values[k]);
     }
 
     // Compress the tree by merging nodes with a single child
@@ -792,7 +665,7 @@ class ART {
                 }
             }
             
-            // Only compress if the child is not a leaf (to preserve tree structure)
+            // Inner child: merge this node's prefix and the child byte into the child's prefix
             if (single_child && !isLeaf(single_child)) {
                 // Combine prefixes: current node's prefix + child_key + child's prefix
                 uint8_t combined_prefix[maxPrefixLength];
@@ -821,7 +694,12 @@ class ART {
                 
                 // Replace current node with the child
                 *nodeRef = single_child;
-                delete node;
+                reclaimNode(node);
+                compressed_nodes++;
+            } else if (single_child) {
+                // Lazy expansion: a lone leaf replaces its parent (a leaf has no prefix to merge)
+                *nodeRef = single_child;
+                reclaimNode(node);
                 compressed_nodes++;
             }
         }
