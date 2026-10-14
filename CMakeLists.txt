@@ -24,7 +24,6 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
 # ── Key-width selection ────────────────────────────────────────────────────────
 # Set QUART_KEY_64=ON to build with 64-bit integer keys (default: 32-bit).
 #   cmake -DQUART_KEY_64=ON ..
-# NOTE: ART::bulkLoad is 32-bit-only and produces wrong results under 64-bit keys.
 option(QUART_KEY_64 "Use 64-bit integer keys (default: 32-bit)" OFF)
 if(QUART_KEY_64)
     message(STATUS "QuART: building with 64-bit keys")

@@ -107,9 +107,6 @@ class ART {
     // compressTree() afterwards to restore prefix compression.
     // Keys must be sorted and unique and the tree must be empty (or built
     // only by bulkLoad, without compressTree in between).
-    // NOTE: 32-bit-key-specific (fixed 4-level tree structure).  Calling it with
-    // QUART_KEY_64 defined produces incorrect results; use regular insert()
-    // for 64-bit keys instead.
     void bulkLoad(const std::vector<key_int_t>& keys, const std::vector<key_int_t>& values) {
         size_t n = keys.size();
         if (n == 0) return;
