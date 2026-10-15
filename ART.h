@@ -99,7 +99,7 @@ class ART {
     // traversal.  The group node is allocated at its final size (the smallest
     // of Node4/16/48/256 that fits), and a single-key group is stored as a
     // bare leaf (lazy expansion).  Each group is classified against the
-    // previous group's prefix (Table 2):
+    // previous group's prefix (paper §3.4):
     //   BL_FP_INSERT : same (b0,b1) prefix          -> stay under `cursor`
     //   BL_BRIDGE    : new (b0,b1) prefix (or first) -> move `cursor` to it
     // `cursor` is the paper's single pointer to the node for the current
