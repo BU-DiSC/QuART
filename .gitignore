@@ -3,5 +3,9 @@ build/
 .DS_Store
 .vscode/launch.json
 .vscode/tasks.json
-results/
+**/results/
 workloads/
+experiments/bods/
+experiments/5.1-bods-experiments/quick-insertion-tree/
+
+graphs/
