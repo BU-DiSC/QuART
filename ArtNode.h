@@ -29,16 +29,34 @@
 
 namespace ART {
 class ART;
+struct ArtNode;
+
+// Node reclamation hook.  The base insert methods below free a grown-out node
+// by calling this instead of `delete this`, so a tree variant can override how
+// (and when) nodes are reclaimed.  Declared here (ART is still incomplete);
+// defined inline in ART.h once ART is complete.  Default behaviour = plain
+// delete, so single-threaded variants are byte-for-byte unchanged.  The
+// concurrent variant overrides it to DEFER the free (retire list) and mark the
+// node obsolete, so a cached fast-path pointer can never dereference freed
+// memory.
+void reclaimArtNode(ART* tree, ArtNode* n);
+
 // Constants for the node types
 static const int8_t NodeType4 = 0;
 static const int8_t NodeType16 = 1;
 static const int8_t NodeType48 = 2;
 static const int8_t NodeType256 = 3;
+// Sentinel type stamped on a node that has been grown out and unlinked from the
+// tree but not yet freed (deferred reclamation).  Never appears on a node that
+// is still reachable by normal traversal; the concurrent fast path checks for
+// it to detect that its cached tail pointer has gone stale.
+static const int8_t NodeTypeObsolete = -1;
 
 // The maximum prefix length for compressed paths stored in the
 // header, if the path is longer it is loaded from the database on
-// demand
-static const unsigned maxPrefixLength = 4;
+// demand.  Equals keyBytes so the full key fits in a single prefix
+// chain (32-bit → 5, 64-bit → 9).
+static const unsigned maxPrefixLength = keyBytes;
 
 // Shared header of all inner nodes
 struct ArtNode {
@@ -69,33 +87,19 @@ struct Node4 : ArtNode {
         memset(child, 0, sizeof(child));
     }
 
-    void lilInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                        ArtNode* child);
-
     // Base ART insert function for Node4
     void insertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
                      ArtNode* child);
-    // Insert function used in base tail insert. Checks if fp structures need
-    // to be updated and updates if necessary
-    void tailInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                         ArtNode* child,
-                         std::array<ArtNode*, maxPrefixLength>& temp_fp_path,
-                         size_t& temp_fp_path_length, size_t depth_prev);
 
-    void stailInsertNode4ChangeFp(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
+    void insertNode4ChangeFp(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
                                   ArtNode* child);
-    void stailInsertNode4PreserveFpPrefixExpansion(ART* tree, ArtNode** nodeRef,
+    void insertNode4PreserveFpPrefixExpansion(ART* tree, ArtNode** nodeRef,
                                                    uint8_t keyByte,
                                                    ArtNode* child);
-    void stailInsertNode4PreserveFp(ART* tree, ArtNode** nodeRef,
+    void insertNode4PreserveFp(ART* tree, ArtNode** nodeRef,
                                     uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode4ChangeFp(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                                  ArtNode* child);
-    void lilCanInsertNode4PreserveFpPrefixExpansion(ART* tree, ArtNode** nodeRef,
-                                                   uint8_t keyByte,
-                                                   ArtNode* child);
-    void lilCanInsertNode4PreserveFp(ART* tree, ArtNode** nodeRef,
-                                    uint8_t keyByte, ArtNode* child);
+    void bulkLoadInsertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node4
     void eraseNode4(ART* tree, ArtNode** nodeRef, ArtNode** leafPlace);
 };
@@ -110,26 +114,16 @@ struct Node16 : ArtNode {
         memset(child, 0, sizeof(child));
     }
 
-    void lilInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                         ArtNode* child);
-
     // Base ART insert function for Node16
     void insertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
                       ArtNode* child);
-    // Insert function used in base tail insert. Checks if fp structures need
-    // to be updated and updates if necessary.
-    void tailInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child,
-                          std::array<ArtNode*, maxPrefixLength>& temp_fp_path,
-                          size_t& temp_fp_path_length, size_t depth_prev);
-    void stailInsertNode16ChangeFp(ART* tree, ArtNode** nodeRef,
+
+    void insertNode16ChangeFp(ART* tree, ArtNode** nodeRef,
                                    uint8_t keyByte, ArtNode* child);
-    void stailInsertNode16PreserveFp(ART* tree, ArtNode** nodeRef,
+    void insertNode16PreserveFp(ART* tree, ArtNode** nodeRef,
                                      uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode16ChangeFp(ART* tree, ArtNode** nodeRef,
-                                   uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode16PreserveFp(ART* tree, ArtNode** nodeRef,
-                                     uint8_t keyByte, ArtNode* child);
+    void bulkLoadInsertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node16
     void eraseNode16(ART* tree, ArtNode** nodeRef, ArtNode** leafPlace);
 };
@@ -144,26 +138,16 @@ struct Node48 : ArtNode {
         memset(child, 0, sizeof(child));
     }
 
-    void lilInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                         ArtNode* child);
-
     // Base ART insert function for Node48
     void insertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
                       ArtNode* child);
-    // Insert function used in base tail insert. Checks if fp structures need
-    // to be updated and updates if necessary.
-    void tailInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                          ArtNode* child,
-                          std::array<ArtNode*, maxPrefixLength>& temp_fp_path,
-                          size_t& temp_fp_path_length, size_t depth_prev);
-    void stailInsertNode48ChangeFp(ART* tree, ArtNode** nodeRef,
+
+    void insertNode48ChangeFp(ART* tree, ArtNode** nodeRef,
                                    uint8_t keyByte, ArtNode* child);
-    void stailInsertNode48PreserveFp(ART* tree, ArtNode** nodeRef,
+    void insertNode48PreserveFp(ART* tree, ArtNode** nodeRef,
                                      uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode48ChangeFp(ART* tree, ArtNode** nodeRef,
-                                   uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode48PreserveFp(ART* tree, ArtNode** nodeRef,
-                                     uint8_t keyByte, ArtNode* child);
+    void bulkLoadInsertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node48
     void eraseNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte);
 };
@@ -174,23 +158,14 @@ struct Node256 : ArtNode {
 
     Node256() : ArtNode(NodeType256) { memset(child, 0, sizeof(child)); }
 
-    void lilInsertNode256(ART* tree [[maybe_unused]],
-                          ArtNode** nodeRef [[maybe_unused]], uint8_t keyByte,
-                          ArtNode* child);
-
     // Base ART insert function for Node256
     void insertNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
                        ArtNode* child);
-    // Insert function used in base tail insert. Checks if fp structures need
-    // to be updated and updates if necessary.
-    void tailInsertNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
-                           ArtNode* child,
-                           std::array<ArtNode*, maxPrefixLength>& temp_fp_path,
-                           size_t& temp_fp_path_length, size_t depth_prev);
-    void stailInsertNode256ChangeFp(ART* tree, ArtNode** nodeRef,
+
+    void insertNode256ChangeFp(ART* tree, ArtNode** nodeRef,
                                     uint8_t keyByte, ArtNode* child);
-    void lilCanInsertNode256ChangeFp(ART* tree, ArtNode** nodeRef,
-                                    uint8_t keyByte, ArtNode* child);
+    void bulkLoadInsertNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
+                          ArtNode* child, ArtNode*& cursor);
     // Erase function for Node256
     void eraseNode256(ART* tree, ArtNode** nodeRef, uint8_t keyByte);
 };
@@ -242,7 +217,7 @@ void Node4::insertNode4(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
         for (unsigned i = 0; i < 4; i++)
             newNode->key[i] = flipSign(this->key[i]);
         memcpy(newNode->child, this->child, this->count * sizeof(uintptr_t));
-        delete this;
+        reclaimArtNode(tree, this);
         return newNode->insertNode16(tree, nodeRef, keyByte, child);
     }
 }
@@ -326,7 +301,7 @@ void Node16::insertNode16(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
             newNode->childIndex[flipSign(this->key[i])] = i;
         copyPrefix(this, newNode);
         newNode->count = this->count;
-        delete this;
+        reclaimArtNode(tree, this);
         return newNode->insertNode48(tree, nodeRef, keyByte, child);
     }
 }
@@ -378,7 +353,7 @@ void Node48::insertNode48(ART* tree, ArtNode** nodeRef, uint8_t keyByte,
         newNode->count = this->count;
         copyPrefix(this, newNode);
         *nodeRef = newNode;
-        delete this;
+        reclaimArtNode(tree, this);
         return newNode->insertNode256(tree, nodeRef, keyByte, child);
     }
 }
@@ -480,7 +455,14 @@ ArtNode** findChild(ArtNode* n, uint8_t keyByte) {
             return &(node->child[keyByte]);
         }
     }
-    throw;  // Unreachable
+    // Unreachable under single-threaded use (type is always one of the four).
+    // Under the concurrent OLC descent, however, an optimistic reader can call
+    // findChild on a node a concurrent grower just stamped NodeTypeObsolete
+    // (type == -1) before its version check restarts the descent.  Return the
+    // "search failed" sentinel (as the not-found branches do) instead of the
+    // bare `throw` (which would std::terminate): the caller's olcCheck then sees
+    // the bumped version and restarts.  Never taken by serial callers.
+    return &nullNode;
 }
 
 ArtNode* minimum(ArtNode* node) {

@@ -1,72 +1,109 @@
-# Qu-ART
+# QuART — Quick Ingestion to ART through Sortedness Awareness
 
-This repository contains an implementation of the Adaptive Radix Tree (ART) and several Qu-ART (Quick Adaptive Radix Tree) variants with different fast-path strategies.
+QuART is a sortedness-aware Adaptive Radix Tree (ART). It avoids redundant
+root-to-leaf traversals on near-sorted key streams by reusing cached insertion
+state (a *fast-pointer*, `fp`) along shared prefix paths. This repo backs the
+paper *"QuART: Quick Ingestion to ART through Sortedness Awareness"* and
+reproduces its §4 figures.
 
----
+## What's here
 
-## How to Build
+- **Serial fast paths** (`trees/`): `QuART_tail`, `QuART_lil` (êit), `QuART_stail`
+  (super-tail) — three fast-pointer placement policies on top of the base `ART`.
+- **Bulk loading** (`ART::bulkLoad`, `QuArtNodeBulkLoadMethods.cpp`): grouped,
+  single-threaded construction from sorted keys (paper §3.4, Algorithm 2).
+- **Concurrent QuART** (`trees/olc_base.h`, `trees/QuART_conc_olc_*.h`): an
+  Optimistic-Lock-Coupling (OLC) design with a per-thread fast-pointer.
+  `QuART_conc_olc_stail` (QuART-OLC) is A/B'd against `QuART_conc_olc_art`
+  (plain ART-OLC, no fast path).
 
-1. Create a `build` directory and switch to it:
-    ```shell
-    mkdir build/
-    cd build/
-    ```
-2. Compile using CMake:
-    ```shell
-    cmake ..
-    make
-    ```
+## Requirements
 
----
+- **Linux x86-64**: the code uses x86 SSE/AVX intrinsics (`emmintrin.h`,
+  `immintrin.h`) and POSIX `sys/time.h`. macOS / non-x86 will not compile.
+- CMake ≥ 3.10, a C++17 compiler (GCC or Clang), `make`. Binaries are built with
+  `-march=native` and may `SIGILL` on an older/different CPU.
 
-## How to Run
-
-Run the executables in `build` with the following options:
-
-
-```shell
-./run [-v] [-N <num_keys>] -f <input_file> -t <tree_type>
-```
-
-
-### Arguments
-
-- `-f <input_file>`: Path to the binary file that contains keys 
-- `-N <num_keys>`: Number of keys to insert and query (optional, default = 5,000,000)
-- `-v`: Verbose mode (optional, default = false)
-- `-t <tree_type>`: Type of tree to use (`ART`, `QuART_tail`, or `QuART_lil`)
-
-### Example
+## Build
 
 ```shell
-./run -N 1000000 -f ../bods/workloads/workload_N1000000_K90_L10.bin
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
----
-
-## Qu-ART Variants
-
-- **ART**: Baseline Adaptive Radix Tree.
-- **QuART_tail**: ART with tail optimization.
-- **QuART_lil**: ART with lil optimization.
-- **QuART_stail**: ART with stail optimization.
-- **QuART_stail_reset**: ART with stail optimization, supports fp resets too.
-
-You can run each variant by using the `run` executable in `build/` with the `-t` option to select the tree type. For example:
+Targets: `run` (serial benchmark driver), `test_conc_olc` (concurrent insert
+A/B), `test_conc_olc_readwrite` (concurrent mixed read/write A/B).
 
 ```shell
-./run -f <input_file> -N <num_keys> -t ART
-./run -f <input_file> -N <num_keys> -t QuART_tail
-./run -f <input_file> -N <num_keys> -t QuART_lil
-./run -f <input_file> -N <num_keys> -t QuART_stail
-./run -f <input_file> -N <num_keys> -t QuART_stail_reset
+# serial driver: -t ART|QuART_tail|QuART_lil|QuART_stail ; --bulkload ; --synthetic
+./build/run -t QuART_stail -f <workload.bin> -N 500000000
+./build/run -t ART -N 1000000000 --synthetic --bulkload   # grouped bulk load
 ```
 
-Replace `<input_file>` and `<num_keys>` with your workload file and desired number of keys.
+## Running Experiments
 
----
+All experiments are self-contained and idempotent. Each `run.sh` invokes
+`experiments/setup.sh` to clone dependencies (BoDS workload generator,
+quick-insertion-tree), generate workloads, and build binaries as needed.
 
-## Notes
+> **Disk warning:** `setup.sh` generates the §4.1/§4.2 workloads at N=500M
+> (~1.9 GB each, ~49 GB total). Point `WORKLOAD_DIR` at pre-generated `.bin`
+> files to skip, or run only §4.4 (which generates its own small N=20M files).
 
-- Input files should be binary files containing 32-bit unsigned integer keys.
-- You can modify `run_experiments.sh` to change the number of repetitions, workload location, or which tree variants are tested.
+```shell
+bash experiments/setup.sh        # one-time bootstrap (optional; run.sh calls it)
+```
+
+### §4.1 — BoDS sortedness experiments (N=500M)
+
+Three sub-experiments over the BoDS K-L sortedness grid:
+
+```shell
+bash experiments/4.1-bods/quart-vs-art/run.sh    # Figure 9  — ART vs tail/lil/stail, throughput vs K
+bash experiments/4.1-bods/stail-vs-art/run.sh    # Figure 10 — stail vs ART speedup heatmap (K,L)
+bash experiments/4.1-bods/stail-vs-quit/run.sh   # Figure 11 — stail vs QuIT speedup heatmap (K,L)
+```
+
+Results: `experiments/4.1-bods/<sub>/results/results_<TIMESTAMP>.csv`.
+Env: `WORKLOAD_DIR`, `REPEAT` (default 1–5; raise for paper-quality averages).
+
+### §4.2 — TPC-H workload (Figure 12)
+
+Insertion and query throughput of B+-tree, QuIT, ART, and the three QuART
+variants on a TPC-H-inspired near-sorted `lineitem` workload (N=6M, K≈96.67, L≈0.1).
+
+```shell
+bash experiments/4.2-tpch/run.sh
+```
+
+Results: `experiments/4.2-tpch/results/results_<TIMESTAMP>.csv`.
+Env: `WORKLOAD_FILE`, `REPEAT` (default 10; paper used 200).
+
+### §4.3 — Bulk loading (Figure 13)
+
+Standard repeated ART insertion vs QuART grouped bulk loading on fully sorted
+keys, for input sizes 100M–2B.
+
+```shell
+bash experiments/4.3-bulkload/run.sh
+```
+
+Results: `experiments/4.3-bulkload/results/results_<TIMESTAMP>.csv`. Env: `REPEAT` (default 5).
+
+### §4.4 — Concurrent QuART (Figures 14 & 15)
+
+A/B of QuART-OLC (`QuART_conc_olc_stail`) vs ART-OLC (`QuART_conc_olc_art`):
+concurrent insert throughput vs thread count over four workloads (Fig 14), and
+mixed concurrent read/write (Fig 15). Each thread ingests its own near-sorted
+BoDS N=20M stream; this experiment generates those small per-stream files itself.
+
+```shell
+bash experiments/4.4-concurrent/run.sh
+```
+
+Results: `experiments/4.4-concurrent/results/fig14_<TIMESTAMP>.csv` and
+`fig15_<TIMESTAMP>.csv`. Env: `THREADS` (default `"1 2 4 8 16"`), `PER_STREAM`
+(default 20000000), `WORKLOAD_DIR`.
+
+> §5 (PostgreSQL VACUUM, Redis `rax`) is evaluated in separate repositories and
+> is out of scope for this one.

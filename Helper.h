@@ -26,16 +26,65 @@
 
 namespace ART {
 
+// ── Key-width configuration ───────────────────────────────────────────────────
+// Define QUART_KEY_64 (e.g. -DQUART_KEY_64 at compile time, or via the
+// CMake option of the same name) to switch to 64-bit integer keys.
+// Without it the default is 32-bit integer keys.
+#ifdef QUART_KEY_64
+    using key_int_t = uint64_t;
+    static constexpr unsigned keyBytes = 9;   // 8 key bytes + 1 null terminator
+#else
+    using key_int_t = uint32_t;
+    static constexpr unsigned keyBytes = 5;   // 4 key bytes + 1 null terminator
+#endif
+
+// Mask for all key bytes except the lowest one (used for FP slot classification).
+static constexpr key_int_t upperMask = (key_int_t)-1 >> 8;
+
 uint8_t flipSign(uint8_t keyByte) {
     // Flip the sign bit, enables signed SSE comparison of unsigned values, used
     // by Node16
     return keyByte ^ 128;
 }
 
-void loadKey(uint32_t tid, uint8_t key[]) {
-    // Store the key of the tuple into the key vector
-    // Implementation is database specific
+inline void loadKey(key_int_t tid, uint8_t key[]) {
+    // Store the key of the tuple into the key vector (big-endian byte order).
+#ifdef QUART_KEY_64
+    reinterpret_cast<uint64_t*>(key)[0] = __builtin_bswap64(tid);
+    key[8] = 0;  // null terminator byte
+#else
     reinterpret_cast<uint32_t*>(key)[0] = __builtin_bswap32(tid);
+    key[4] = 0;  // null terminator byte
+#endif
+}
+
+// Extract the upper (sizeof(key_int_t)-1) bytes from a key byte array.
+// These are bytes key[0..sizeof(key_int_t)-2], i.e. all but the last byte.
+//
+// The key is stored big-endian (see loadKey), so the whole key value is a single
+// byte-swapped load and the upper bytes are that value >> 8.  We do width-
+// specific straight-line loads here (mirroring loadKey) rather than a generic
+// byte-by-byte shift/or loop: under -march=native each branch is a single MOVBE
+// + shift, vs. ~7 instructions (32-bit) / ~19 (64-bit) for the loop.  Reading
+// the full key_int_t width is in-bounds because the key array always has a
+// trailing null byte (keyBytes = sizeof(key_int_t) + 1); the low byte is
+// discarded by the shift.
+inline key_int_t getKeyUpperBytes(const uint8_t key[]) {
+#ifdef QUART_KEY_64
+    uint64_t v;
+    memcpy(&v, key, sizeof(v));
+    return __builtin_bswap64(v) >> 8;
+#else
+    uint32_t v;
+    memcpy(&v, key, sizeof(v));
+    return __builtin_bswap32(v) >> 8;
+#endif
+}
+
+// Extract the upper bytes from a stored leaf value (equivalent to value >> 8,
+// masked to sizeof(key_int_t)-1 bytes).
+inline key_int_t getLeafUpperBytes(uintptr_t leafValue) {
+    return static_cast<key_int_t>(leafValue >> 8) & upperMask;
 }
 
 static inline unsigned ctz(uint16_t x) {
