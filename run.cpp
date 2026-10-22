@@ -14,6 +14,16 @@
 
 using namespace std;
 
+// With -DQUART_FP_STATS the final CSV line gains a third column: the number of
+// inserts that started at the fast pointer (0 for plain ART).
+#ifdef QUART_FP_STATS
+#define FP_STATS_COL(tree) << "," << (tree)->fp_insert_count
+#define FP_STATS_COL_ART << ",0"
+#else
+#define FP_STATS_COL(tree)
+#define FP_STATS_COL_ART
+#endif
+
 template <typename key_type>
 std::vector<key_type> read_bin(const char* filename) {
     std::ifstream inputFile(filename, std::ios::binary | std::ios::ate);
@@ -127,7 +137,7 @@ int main(int argc, char** argv) {
                 cout << "Query time: " << query_time << " ns" << endl;
             }
 
-            cout << insertion_time << "," << query_time << endl;
+            cout << insertion_time << "," << query_time FP_STATS_COL_ART << endl;
             return 0;
         } else {
             // Regular ART insertion
@@ -162,7 +172,7 @@ int main(int argc, char** argv) {
                 cout << "Query time: " << query_time << " ns" << endl;
             }
 
-            cout << insertion_time << "," << query_time << endl;
+            cout << insertion_time << "," << query_time FP_STATS_COL_ART << endl;
         }
     } else if (tree_type == "QuART_tail") {
         ART::QuART_tail* tree = new ART::QuART_tail();
@@ -209,7 +219,7 @@ int main(int argc, char** argv) {
         }
 
         // Output the times in csv format, including tree type
-        cout << insertion_time << "," << query_time << endl;
+        cout << insertion_time << "," << query_time FP_STATS_COL(tree) << endl;
     } else if (tree_type == "QuART_lil") {
         ART::QuART_lil* tree = new ART::QuART_lil();
         long long insertion_time = 0;
@@ -251,7 +261,7 @@ int main(int argc, char** argv) {
         }
 
         // Output the times in csv format, including tree type
-        cout << insertion_time << "," << query_time << endl;
+        cout << insertion_time << "," << query_time FP_STATS_COL(tree) << endl;
     } else if (tree_type == "QuART_stail") {
         ART::QuART_stail* tree = new ART::QuART_stail();
         long long insertion_time = 0;
@@ -293,7 +303,7 @@ int main(int argc, char** argv) {
         }
 
         // Output the times in csv format, including tree type
-        cout << insertion_time << "," << query_time << endl;
+        cout << insertion_time << "," << query_time FP_STATS_COL(tree) << endl;
     } else {
         cerr << "Unknown tree type: " << tree_type << endl;
         return 1;

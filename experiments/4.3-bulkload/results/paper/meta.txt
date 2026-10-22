@@ -1,0 +1,1 @@
+source: the paper's Figure 13 data (synthetic sorted keys 1..N, REPEAT=5 averages).

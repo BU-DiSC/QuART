@@ -1,0 +1,3 @@
+source: the paper's Figure 14 and 15 data (median of 5 runs, one 24-core socket, N=20M per stream).
+Only these long-form medians were kept; the raw per-run driver rows (fig14_raw.csv /
+fig15_raw.csv that run.sh writes) were not archived.

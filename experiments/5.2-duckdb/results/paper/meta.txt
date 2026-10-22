@@ -1,0 +1,4 @@
+source: the size-sweep run in systems/duckdb/benchmark/quart_grouped_bulk_load/results/
+(Release build of DuckDB v2.0.0-dev, one 24-core socket via numactl, threads 1-24, 3 repeats,
+sorted 32-bit key sets of 5M-500M).  profile.csv holds the profiler's per-operator times behind
+Figure 16; timing.csv the whole-statement wall times.

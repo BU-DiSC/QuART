@@ -1,0 +1,4 @@
+# Python packages for the plot/table scripts (python3 -m pip install -r experiments/requirements.txt)
+matplotlib>=3.5
+pandas>=1.3
+numpy>=1.20

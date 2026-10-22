@@ -60,6 +60,19 @@ else()
     message(STATUS "QuART: stail fast-path counters disabled (default)")
 endif()
 
+# ── Serial fast-path counter (§3.3, Fig 6) ─────────────────────────────────────
+# Set QUART_FP_STATS=ON to count, in the serial QuART trees, how many inserts
+# started at the fast pointer instead of the root.  `run` then prints a third
+# column (fp_inserts) after insertion_ns,query_ns.  OFF by default: the counter
+# adds an increment to the insert hot path, so take timings from an OFF build.
+#   cmake -DQUART_FP_STATS=ON ..
+option(QUART_FP_STATS "Count fast-path inserts in the serial QuART trees (run)" OFF)
+if(QUART_FP_STATS)
+    message(STATUS "QuART: serial fast-path counter ENABLED (run)")
+else()
+    message(STATUS "QuART: serial fast-path counter disabled (default)")
+endif()
+
 # ── Targets ─────────────────────────────────────────────────────────────────────
 # All executables are tuned for the build host with -march=native.  This enables
 # the wider instruction set the Node16 SSE compares benefit from.  Note: it
@@ -74,6 +87,9 @@ find_package(Threads REQUIRED)
 # plus the --bulkload (ART grouped bulk loading) and --synthetic paths.
 # Backs §4.1 (BoDS), §4.2 (TPC-H), and §4.3 (bulk loading).
 add_executable(run run.cpp)
+if(QUART_FP_STATS)
+    target_compile_definitions(run PRIVATE QUART_FP_STATS)
+endif()
 
 # §4.4 (Fig 14): concurrent insert throughput vs thread count.  A/Bs the two
 # concurrent tree types on identical multi-stream workloads —

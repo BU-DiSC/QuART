@@ -47,6 +47,7 @@ class QuART_stail : public QuART {
         KeyType type = getKeyType(key);
 
         if (type == KeyType::FP_INSERT) {
+            QUART_FP_BUMP();  // both sub-cases below start the insert at fp
             if (this->reset_counter != RESET_COUNTER_INIT)
                 this->reset_counter = RESET_COUNTER_INIT;
             if (this->fp_depth == maxPrefixLength - 2) {

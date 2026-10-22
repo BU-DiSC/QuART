@@ -1,0 +1,5 @@
+source: the single-repeat run behind the paper's Figure 9 (same measurements as the
+earlier run.sh output, columns renamed).  The CSV the paper's figure
+was drawn from had been hand-edited afterwards (QuART_stail +0.2..0.5 Mops at every K,
+QuART_tail/QuART_lil +0.1..0.3 at K=100); this file is the unedited measurement, so the
+regenerated figure differs from the paper's by those amounts.

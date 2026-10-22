@@ -1,0 +1,4 @@
+source: systems/redis/test-standalone/results/quart_stail_standalone_N500M_merged_runs1-2.csv
+(two sweeps concatenated, N=500M, K=L in {0,1,5,10,25,100}, every key verified) behind Figure 17,
+and the in-server CSV in systems/redis/test-redis/results/ (in-server
+stream appends, N=500M, 3 repetitions, stock rax vs QuART-rax at group depth 7).

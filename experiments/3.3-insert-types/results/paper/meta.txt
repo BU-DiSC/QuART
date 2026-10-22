@@ -1,0 +1,8 @@
+source: the paper's Figure 6 data (fast-path insert counts, BoDS N=500M).
+The source recorded only K; L=1 is assumed (L=0 at K=0), the convention of the Fig 9 sweep.
+fp_inserts = inserts that started at the fast pointer; root_inserts = N - fp_inserts.
+Counts from run.sh (QUART_FP_STATS build) match this definition for stail exactly
+(K=0: N - 500M/256 - 1 = 498,046,874).  For tail and lil the counter reports only the
+inserts that appended directly at fp; the paper's tail/lil counts also include the
+few inserts per 256-key group that match fp's prefix but re-descend from the root to
+expand a leaf, so they are about 0.4% higher at K=0.

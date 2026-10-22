@@ -1,0 +1,22 @@
+# The three system integrations of the paper (§5), each a fork with QuART added
+# on the fork's default branch.  URLs are relative to this repository's remote, so the
+# same file resolves under whichever organisation hosts the artifact.
+# quart-base = the upstream commit the fork starts from (used by scripts/check_anonymity.sh).
+[submodule "duckdb"]
+	path = systems/duckdb
+	url = ../QuART-DuckDB.git
+	branch = v2.0-cyanoptera
+	shallow = true
+	quart-base = d4355d01c59362d57036ad377735dd5340276a5b
+[submodule "postgres"]
+	path = systems/postgres
+	url = ../QuART-Postgres.git
+	branch = master
+	shallow = true
+	quart-base = 73dd7163c5d19f93b629d1ccd9d2a2de6e9667f6
+[submodule "redis"]
+	path = systems/redis
+	url = ../QuART-Redis.git
+	branch = unstable
+	shallow = true
+	quart-base = b5a37c0e4241b087e4dcefc6f951335257c90cbf

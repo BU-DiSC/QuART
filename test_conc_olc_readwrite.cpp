@@ -54,7 +54,10 @@ using namespace ART;
 
 static void encodeKey(key_int_t k, uint8_t out[keyBytes]) { loadKey(k, out); }
 
-static constexpr long long STREAM_N = 20000000;     // keys per file
+// keys per BoDS stream file (workload_N<STREAM_N>_<series>_start<i>.bin);
+// the paper uses 20M, QUART_STREAM_N overrides it for smoke tests.
+static const long long STREAM_N =
+    getenv("QUART_STREAM_N") ? atoll(getenv("QUART_STREAM_N")) : 20000000;
 static constexpr long long STREAM_STEP = 40000000;  // start-offset stride
 
 // One BoDS N=20M file per stream, at 40M start-offset steps (start=i*40M+1),
@@ -233,7 +236,8 @@ int main(int argc, char** argv) {
     int read_pct = 50;
     if (argc >= 3 && argv[2][0] != '-') read_pct = atoi(argv[2]);
     string series = "K0_L0";
-    string bodsDir = "/scratch/cgokmen/bods/workloads";
+    // BoDS workload directory: --bods <dir>, else $WORKLOAD_DIR.
+    string bodsDir = getenv("WORKLOAD_DIR") ? getenv("WORKLOAD_DIR") : "";
     double load_frac = 0.25;
     size_t new_cap = 1000000;  // max new inserts/stream in timed phase (0 = all)
     for (int i = 2; i < argc; i++) {
@@ -257,6 +261,10 @@ int main(int argc, char** argv) {
             "load_frac=%.2f cores=%d\n",
             series.c_str(), read_pct, W, load_frac, numCores);
 
+    if (bodsDir.empty()) {
+        cerr << "error: --bods <dir> is required (or set WORKLOAD_DIR)\n";
+        return 1;
+    }
     auto streams = buildBods(bodsDir, series, W, 0);
     size_t total_keys = 0, total_warm = 0, total_new = 0;
     vector<size_t> warm(W);

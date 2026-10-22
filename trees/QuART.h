@@ -3,6 +3,15 @@
 #include "../ART.h"
 #include "../ArtNode.h"
 
+// Fast-path insert counter (-DQUART_FP_STATS, see CMakeLists.txt).  Each serial
+// variant calls QUART_FP_BUMP() on the arms that start the insert at fp rather
+// than at the root; it compiles to nothing in a normal build.
+#ifdef QUART_FP_STATS
+#define QUART_FP_BUMP() (++this->fp_insert_count)
+#else
+#define QUART_FP_BUMP() ((void)0)
+#endif
+
 namespace ART {
 
 // Abstract base class for all QuART insertion variants.
@@ -15,6 +24,11 @@ class QuART : public ART {
     QuART() : ART() {}
 
     virtual void insert(uint8_t key[], uintptr_t value) = 0;
+
+#ifdef QUART_FP_STATS
+    // Number of inserts that started at fp instead of the root (Fig 6).
+    uint64_t fp_insert_count = 0;
+#endif
 
    protected:
     void insert_recursive_preserve_fp(ArtNode* node, ArtNode** nodeRef,

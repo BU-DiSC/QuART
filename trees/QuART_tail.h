@@ -42,6 +42,7 @@ class QuART_tail : public QuART {
             // Upper bytes match: fast path starting from fp.
             if (this->fp_depth == maxPrefixLength - 2) {
                 // fp is at the last-byte level; insert directly into the fp node.
+                QUART_FP_BUMP();
                 ArtNode* newNode = makeLeaf(value);
                 switch (this->fp->type) {
                     case NodeType4:
@@ -72,6 +73,7 @@ class QuART_tail : public QuART {
             // Upper bytes match: fast path starting from fp.
             if (this->fp_depth == maxPrefixLength - 2) {
                 // fp is at the last-byte level; insert directly into the fp node.
+                QUART_FP_BUMP();
                 ArtNode* newNode = makeLeaf(value);
                 switch (this->fp->type) {
                     case NodeType4:

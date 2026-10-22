@@ -1,0 +1,2 @@
+source: systems/postgres/quart_bench/results/replay.csv — the reference replay of the 27 paper
+streams (W1..W9 at 250M, 1B, 5B rows), REPS=10, TRIALS=3, every tree verified key by key.

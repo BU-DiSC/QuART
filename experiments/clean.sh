@@ -2,7 +2,7 @@
 # experiments/clean.sh
 #
 # Reverses everything done by experiments/setup.sh:
-#   1. Remove the Qu-ART build directory
+#   1. Remove the QuART build directory
 #   2. Remove the experiment 5.2 QuIT build directory
 #   3. Remove the cloned quick-insertion-tree
 #   4. Remove generated workload .bin files (experiments/bods/workloads/)
@@ -31,6 +31,7 @@ BODS_DIR="${BODS_DIR:-$SCRIPT_DIR/bods}"
 QUIT_DIR="$SCRIPT_DIR/4.1-bods/quick-insertion-tree"
 QUIT_BUILD="$SCRIPT_DIR/4.1-bods/build"
 BUILD="$REPO_ROOT/build"
+BUILD_FPSTATS="$REPO_ROOT/build-fpstats"
 
 remove() {
     local TARGET="$1"
@@ -46,16 +47,17 @@ remove() {
     fi
 }
 
-echo "=== Qu-ART clean ==="
+echo "=== QuART clean ==="
 if $DRY_RUN; then
     echo "  (dry-run — pass --yes to actually delete)"
 fi
 echo ""
 
-echo "1. Qu-ART build directory"
+echo "1. QuART build directories"
 remove "$BUILD"
+remove "$BUILD_FPSTATS"
 
-echo "2. Experiment 5.2 QuIT build directory"
+echo "2. QuIT / B+-tree build directory (experiments/4.1-bods/build)"
 remove "$QUIT_BUILD"
 
 echo "3. quick-insertion-tree clone"

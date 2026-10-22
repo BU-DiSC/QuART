@@ -1,0 +1,2 @@
+source: the paper's Figure 12 data (REPEAT=200 averages, N=6M, K=96.67, L=0.1, 60000 lookups).
+Query throughput = (N/100) / avg_query_ns.

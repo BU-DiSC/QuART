@@ -1,0 +1,2 @@
+source: the paper's Figure 11 data (BoDS N=500M grid; QuART_stail vs QuIT with 2 KB nodes).
+Tree names mapped from QuART_stail_reset_2 / QuIT_2k.  Repeat count not recorded.

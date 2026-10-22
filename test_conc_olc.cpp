@@ -166,7 +166,10 @@ static vector<vector<key_int_t>> buildMixed(size_t W, size_t per_stream) {
 // 0 = full file.  conc_olc makes no disjointness assumption, but a clean window
 // keeps the single-threaded ART baseline apples-to-apples and avoids ART's
 // duplicate-key hazard.
-static constexpr long long STREAM_N = 20000000;     // keys per file
+// keys per BoDS stream file (workload_N<STREAM_N>_<series>_start<i>.bin);
+// the paper uses 20M, QUART_STREAM_N overrides it for smoke tests.
+static const long long STREAM_N =
+    getenv("QUART_STREAM_N") ? atoll(getenv("QUART_STREAM_N")) : 20000000;
 static constexpr long long STREAM_STEP = 40000000;  // start-offset stride
 
 // The mixed workload combines the three sortedness levels shown in the QuIT
@@ -421,7 +424,8 @@ int main(int argc, char** argv) {
     bool bods = false;
     bool bods_mixed = false;
     bool no_serial = false;
-    string bodsDir = "/scratch/cgokmen/bods/workloads";
+    // BoDS workload directory: --bods <dir>, else $WORKLOAD_DIR.
+    string bodsDir = getenv("WORKLOAD_DIR") ? getenv("WORKLOAD_DIR") : "";
     string series = "K0_L0";
     for (int i = 2; i < argc; i++) {
         string a = argv[i];
@@ -464,6 +468,10 @@ int main(int argc, char** argv) {
             cerr << "\n";
         } else {
             seriesForStream.assign(W, series);
+        }
+        if (bodsDir.empty()) {
+            cerr << "error: --bods needs a directory (or set WORKLOAD_DIR)\n";
+            return 1;
         }
         streams = buildBods(bodsDir, seriesForStream, W, per_stream);
     } else if (mode == "disjoint")

@@ -1,0 +1,4 @@
+source: the paper's Figure 10 data (BoDS N=500M, K,L in {1,5,10,25,100} plus K=L=0;
+ART, QuART_tail, QuART_lil, QuART_stail; an experimental bidirectional stail variant was dropped).
+Tree names were mapped from the development names (QuART_stail_reset_2 -> QuART_stail,
+QuART_lil_can -> QuART_lil).  Repeat count not recorded.
